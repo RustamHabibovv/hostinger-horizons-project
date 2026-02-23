@@ -7,6 +7,11 @@ import re
 from openai import AsyncOpenAI
 from app.config import get_settings
 from app.schemas import OutputFormat
+from app.prompts.simple import (
+    SYSTEM_PROMPT_FULL_CONTENT,
+    SYSTEM_PROMPT_SEARCH_REPLACE,
+    SYSTEM_PROMPT_DIFF,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -23,102 +28,6 @@ def _extract_json(content: str) -> str:
             content = content[:-3]
         content = content.strip()
     return content
-
-
-# ============================================================================
-# PROMPTS FOR EACH INTERMEDIATE FORMAT
-# All approaches produce a unified diff (via git apply) - these control the
-# intermediate step of how we get the modified content/diff from the LLM.
-# ============================================================================
-
-SYSTEM_PROMPT_FULL_CONTENT = """You are an expert React developer. You will receive a user instruction and a list of files from a React project.
-
-Your task:
-1. Analyze which file(s) need to be modified to fulfill the instruction
-2. Generate the complete modified content for each file
-
-RULES:
-- Only modify files that NEED changes
-- Preserve existing code style and formatting
-- Make minimal changes necessary
-- Return valid, working React/JSX/CSS code
-
-Respond with JSON:
-{
-  "modifications": [
-    {"file": "path/to/file.jsx", "content": "complete modified file content"}
-  ]
-}
-
-If no changes needed: {"modifications": []}
-Return ONLY valid JSON."""
-
-
-SYSTEM_PROMPT_SEARCH_REPLACE = """You are an expert React developer. You will receive a user instruction and a list of files from a React project.
-
-Your task: Generate search/replace blocks to modify the code.
-
-OUTPUT FORMAT - Use this exact format for each change:
-```
-FILE: path/to/file.ext
-<<<<<<< SEARCH
-exact lines to find (must match exactly)
-=======
-replacement lines
->>>>>>> REPLACE
-```
-
-RULES:
-- SEARCH block must match the file EXACTLY (including whitespace)
-- Include enough context lines to make the match unique
-- Multiple changes to same file: use multiple blocks
-- Only modify files that NEED changes
-
-Respond with JSON:
-{
-  "changes": [
-    {
-      "file": "path/to/file.ext",
-      "search": "exact text to find",
-      "replace": "replacement text"
-    }
-  ]
-}
-
-If no changes needed: {"changes": []}
-Return ONLY valid JSON."""
-
-
-SYSTEM_PROMPT_DIFF = """You are an expert React developer. You will receive a user instruction and a list of files from a React project.
-
-Your task: Generate unified diff patches for the required changes.
-
-OUTPUT FORMAT - Standard unified diff:
-```diff
---- a/path/to/file.ext
-+++ b/path/to/file.ext
-@@ -start,count +start,count @@
- context line
--removed line
-+added line
- context line
-```
-
-RULES:
-- Use proper unified diff format with correct line numbers
-- Include 3 lines of context before and after changes
-- Only modify files that NEED changes
-- Each hunk must have correct @@ line numbers
-
-Respond with JSON:
-{
-  "patches": [
-    {"file": "path/to/file.ext", "diff": "unified diff content"}
-  ]
-}
-
-If no changes needed: {"patches": []}
-Return ONLY valid JSON."""
 
 
 # ============================================================================

@@ -10,6 +10,7 @@ from openai import AsyncOpenAI
 
 from app.config import get_settings
 from app.services.agent.intent import ParsedIntent
+from app.prompts.planner import PLANNER_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -46,38 +47,6 @@ class ExecutionPlan:
     files_to_create: list[str]
     estimated_changes: int        # Rough estimate of lines changed
     reasoning: str                # Why this plan
-
-
-PLANNER_SYSTEM_PROMPT = """You are a code change planner for React projects. Given:
-1. User instruction
-2. Parsed intent (type, complexity, hints)
-3. Retrieved relevant files with their content
-
-Create an execution plan specifying which files to modify and in what order.
-
-Consider:
-- Dependencies between files (modify imports before importers)
-- Minimal changes needed
-- Whether new files need to be created
-
-Respond with JSON:
-{
-  "steps": [
-    {
-      "step_number": 1,
-      "action": "modify",
-      "file_path": "src/App.jsx",
-      "description": "Add dark mode state and toggle function",
-      "depends_on": []
-    }
-  ],
-  "files_to_modify": ["src/App.jsx"],
-  "files_to_create": [],
-  "estimated_changes": 20,
-  "reasoning": "Brief explanation of the plan"
-}
-
-Return ONLY valid JSON. Be concise."""
 
 
 async def create_plan(

@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     agent_validate_build: bool = True
     agent_validation_timeout: int = 60
     agent_verbose: bool = True
+    agent_output_format: str = "full_content"  # full_content, search_replace, or diff
     
     class Config:
         env_file = ".env"

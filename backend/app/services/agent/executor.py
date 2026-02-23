@@ -16,6 +16,12 @@ from openai import AsyncOpenAI
 from app.config import get_settings
 from app.services.diff import generate_unified_diff, read_file_content, apply_with_git, list_project_files
 from app.services.agent.planner import ExecutionPlan
+from app.prompts.executor import (
+    EXECUTOR_PROMPT_FULL_CONTENT,
+    EXECUTOR_PROMPT_SEARCH_REPLACE,
+    EXECUTOR_PROMPT_DIFF,
+    EXECUTOR_RETRY_PROMPT,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -24,22 +30,39 @@ settings = get_settings()
 def _extract_json(content: str) -> str:
     """
     Extract JSON from LLM response, handling markdown code blocks.
-    Some models wrap JSON in ```json ... ``` even when asked for raw JSON.
+    Some models wrap JSON in ```json ... ``` even when asked for raw JSON,
+    and some include explanatory text before the JSON block.
     """
     content = content.strip()
     
-    # Remove markdown code blocks if present
-    if content.startswith("```"):
-        # Find the end of the first line (```json or ```)
+    # If there's a code block, extract it (even if there's text before it)
+    json_block_match = re.search(r'```(?:json)?\s*\n(.*?)\n?```', content, re.DOTALL)
+    if json_block_match:
+        content = json_block_match.group(1).strip()
+    elif content.startswith("```"):
+        # Fallback: old logic for simple code blocks
         first_newline = content.find("\n")
         if first_newline != -1:
             content = content[first_newline + 1:]
-        
-        # Remove trailing ```
         if content.endswith("```"):
             content = content[:-3]
-        
         content = content.strip()
+    
+    # If content doesn't start with { or [, try to find JSON object/array
+    if not content.startswith('{') and not content.startswith('['):
+        # Try to find a JSON object
+        json_start = content.find('{')
+        if json_start != -1:
+            # Find matching closing brace
+            brace_count = 0
+            for i, char in enumerate(content[json_start:], start=json_start):
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        content = content[json_start:i+1]
+                        break
     
     return content
 
@@ -56,10 +79,7 @@ async def validate_build(project_path: Path, timeout_seconds: int = 30) -> Build
     """
     Run build/type check to validate code changes.
     
-    Tries multiple validation strategies:
-    1. npm run build (most comprehensive)
-    2. tsc --noEmit (fast type check for TS projects)
-    3. Check for syntax errors via node
+    Uses subprocess.run in a thread pool for Windows compatibility.
     
     Args:
         project_path: Path to the project
@@ -68,6 +88,9 @@ async def validate_build(project_path: Path, timeout_seconds: int = 30) -> Build
     Returns:
         BuildValidationResult with success status and any error output
     """
+    import time
+    start_time = time.time()
+    
     try:
         # Check if package.json exists
         package_json = project_path / "package.json"
@@ -75,36 +98,47 @@ async def validate_build(project_path: Path, timeout_seconds: int = 30) -> Build
             logger.debug("No package.json found, skipping build validation")
             return BuildValidationResult(success=True)
         
-        # Run npm run build
-        logger.info(f"Running build validation in {project_path}")
+        # Run npm run build using subprocess in thread pool (Windows compatible)
+        logger.info(f"[Validation] Starting 'npm run build' in {project_path}")
+        logger.debug(f"[Validation] Timeout: {timeout_seconds}s")
         
-        # Use asyncio.create_subprocess_shell for Windows compatibility
-        process = await asyncio.create_subprocess_shell(
-            "npm run build",
-            cwd=str(project_path),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(),
+        def run_build():
+            """Run build in a separate thread."""
+            return subprocess.run(
+                "npm run build",
+                shell=True,
+                cwd=str(project_path),
+                capture_output=True,
                 timeout=timeout_seconds
             )
-        except asyncio.TimeoutError:
-            process.kill()
-            logger.warning("Build validation timed out")
-            # Timeout is not necessarily an error - build might just be slow
+        
+        try:
+            # Run in thread pool to not block async loop
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, run_build)
+            elapsed = time.time() - start_time
+            
+            # Log output regardless of success
+            stdout_text = result.stdout.decode('utf-8', errors='replace').strip()
+            stderr_text = result.stderr.decode('utf-8', errors='replace').strip()
+            
+            logger.debug(f"[Validation] Completed in {elapsed:.1f}s, return code: {result.returncode}")
+            if stdout_text:
+                logger.debug(f"[Validation] STDOUT:\n{stdout_text[:500]}{'...' if len(stdout_text) > 500 else ''}")
+            if stderr_text:
+                logger.debug(f"[Validation] STDERR:\n{stderr_text[:500]}{'...' if len(stderr_text) > 500 else ''}")
+            
+        except subprocess.TimeoutExpired:
+            elapsed = time.time() - start_time
+            logger.warning(f"[Validation] Timed out after {elapsed:.1f}s")
             return BuildValidationResult(success=True)
         
-        if process.returncode == 0:
-            logger.info("Build validation passed")
+        if result.returncode == 0:
+            logger.info(f"[Validation] ✓ Build passed in {elapsed:.1f}s")
             return BuildValidationResult(success=True)
         
         # Build failed - extract error message
-        error_output = stderr.decode('utf-8', errors='replace')
-        if not error_output:
-            error_output = stdout.decode('utf-8', errors='replace')
+        error_output = stderr_text if stderr_text else stdout_text
         
         # Try to classify error type
         error_type = _classify_error(error_output)
@@ -113,7 +147,8 @@ async def validate_build(project_path: Path, timeout_seconds: int = 30) -> Build
         if len(error_output) > 2000:
             error_output = error_output[:2000] + "\n... (truncated)"
         
-        logger.warning(f"Build validation failed ({error_type}): {error_output[:200]}...")
+        logger.warning(f"[Validation] ✗ Build failed ({error_type}) in {elapsed:.1f}s")
+        logger.warning(f"[Validation] Error:\n{error_output[:500]}...")
         
         return BuildValidationResult(
             success=False,
@@ -123,13 +158,70 @@ async def validate_build(project_path: Path, timeout_seconds: int = 30) -> Build
         
     except FileNotFoundError:
         # npm not found - try alternative validation
-        logger.debug("npm not found, trying alternative validation")
+        logger.debug("[Validation] npm not found, trying alternative validation")
         return await _validate_syntax_only(project_path)
         
     except Exception as e:
-        logger.error(f"Build validation error: {e}")
-        # Don't fail the whole operation if validation has issues
-        return BuildValidationResult(success=True)
+        elapsed = time.time() - start_time
+        logger.error(f"[Validation] Exception after {elapsed:.1f}s: {type(e).__name__}: {e}")
+        import traceback
+        logger.debug(f"[Validation] Traceback:\n{traceback.format_exc()}")
+        # Return failure on validation exceptions - we want to catch issues
+        return BuildValidationResult(
+            success=False,
+            error_output=f"Validation error: {type(e).__name__}: {e}",
+            error_type="validation"
+        )
+
+
+# Regex to find npm package imports (not relative imports)
+NPM_IMPORT_PATTERN = re.compile(
+    r'''(?:import\s+.*?\s+from\s+['"]|import\s*\(\s*['"]|require\s*\(\s*['"])([^'".][^'"]*?)['"]''',
+    re.MULTILINE
+)
+
+
+def _check_npm_imports(modifications: list[dict], project_path: Path) -> str | None:
+    """
+    Check if npm package imports exist in node_modules.
+    Returns error message if missing packages found, None if OK.
+    """
+    node_modules = project_path / "node_modules"
+    if not node_modules.exists():
+        return None  # Skip check if no node_modules
+    
+    missing_packages = set()
+    
+    for mod in modifications:
+        content = mod.get("content", "")
+        if not content:
+            continue
+        
+        imports = NPM_IMPORT_PATTERN.findall(content)
+        
+        for imp in imports:
+            # Skip relative imports (already handled by _validate_imports)
+            if imp.startswith("."):
+                continue
+            
+            # Extract base package name (e.g., "@radix-ui/react-slot" → "@radix-ui/react-slot", "react-icons/fa" → "react-icons")
+            if imp.startswith("@"):
+                # Scoped package: @scope/package/path → @scope/package
+                parts = imp.split("/")
+                package_name = "/".join(parts[:2]) if len(parts) >= 2 else imp
+            else:
+                # Regular package: package/path → package
+                package_name = imp.split("/")[0]
+            
+            # Check if package exists in node_modules
+            package_path = node_modules / package_name
+            if not package_path.exists():
+                missing_packages.add(package_name)
+    
+    if missing_packages:
+        return f"Missing npm packages: {', '.join(sorted(missing_packages))}. These packages are not installed in the project."
+    
+    return None
 
 
 async def _validate_syntax_only(project_path: Path) -> BuildValidationResult:
@@ -295,47 +387,62 @@ def _import_exists(resolved_path: str, all_files: set[str]) -> bool:
     return False
 
 
-EXECUTOR_SYSTEM_PROMPT = """You are an expert React developer. Generate code modifications based on the plan.
-
-You will receive:
-1. The original instruction
-2. The execution plan (includes both MODIFY and CREATE actions)
-3. The current file contents (new files shown as "(new file)")
-4. Any previous errors to fix
-
-CRITICAL RULES:
-1. For MODIFY actions: Return the complete modified file content
-2. For CREATE actions: Return the complete new file content (must include ALL code)
-3. If a file imports from another file you're creating, you MUST create that file too
-4. Preserve existing code style and formatting
-5. Make sure all imports reference files that exist or are being created
-
-COMMON MISTAKES TO AVOID:
-- Creating an import for a file you didn't create - ALWAYS create the imported file
-- Missing dependencies between files
-- Incomplete implementations
-
-Respond with JSON:
-{
-  "modifications": [
-    {"file": "src/components/NewComponent.jsx", "content": "complete file content"},
-    {"file": "src/App.jsx", "content": "complete modified file content"}
-  ]
-}
-
-You MUST return content for EVERY file in the plan (both modify and create).
-Return ONLY valid JSON."""
+def _get_executor_prompt(output_format: str) -> str:
+    """Get the appropriate executor prompt based on output format."""
+    if output_format == "search_replace":
+        return EXECUTOR_PROMPT_SEARCH_REPLACE
+    elif output_format == "diff":
+        return EXECUTOR_PROMPT_DIFF
+    else:  # full_content (default)
+        return EXECUTOR_PROMPT_FULL_CONTENT
 
 
-EXECUTOR_RETRY_PROMPT = """Your previous attempt failed with error:
-{error}
-
-ANALYZE THE ERROR AND FIX IT:
-- If import fails: You probably forgot to create the imported file. Create it now.
-- If module not found: Make sure all referenced files are included in modifications.
-- If diff apply failed: Check that your content is correct and complete.
-
-Return CORRECTED modifications (include ALL files needed):"""
+def _parse_executor_response(
+    result: dict,
+    file_contents: dict[str, str],
+    output_format: str
+) -> list[dict]:
+    """
+    Parse executor response based on output format.
+    Returns normalized list of {file, content} for all formats.
+    """
+    modifications = result.get("modifications", [])
+    parsed = []
+    
+    for mod in modifications:
+        file_path = mod.get("file")
+        if not file_path:
+            continue
+        
+        action = mod.get("action", "modify")
+        
+        if output_format == "full_content" or action == "create":
+            # Full content mode or new file - content is already complete
+            content = mod.get("content")
+            if content:
+                parsed.append({"file": file_path, "content": content})
+                
+        elif output_format == "search_replace":
+            # Apply search/replace changes
+            original = file_contents.get(file_path, "")
+            modified = original
+            
+            for change in mod.get("changes", []):
+                search = change.get("search", "")
+                replace = change.get("replace", "")
+                if search and search in modified:
+                    modified = modified.replace(search, replace, 1)
+            
+            if modified != original:
+                parsed.append({"file": file_path, "content": modified})
+                
+        elif output_format == "diff":
+            # Store diff directly - will be handled differently
+            diff = mod.get("diff")
+            if diff:
+                parsed.append({"file": file_path, "diff": diff, "content": None})
+    
+    return parsed
 
 
 async def execute_plan(
@@ -415,10 +522,14 @@ Current Files:
         user_prompt += "\nGenerate the modifications:"
         
         try:
+            # Get appropriate system prompt based on output format
+            output_format = settings.agent_output_format
+            system_prompt = _get_executor_prompt(output_format)
+            
             response = await client.chat.completions.create(
                 model=settings.model_executor,  # Best model for code gen
                 messages=[
-                    {"role": "system", "content": EXECUTOR_SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
                 response_format={"type": "json_object"},
@@ -465,11 +576,12 @@ Current Files:
                 last_error = error_msg
                 continue
             
-            # VALIDATION: Check for imports to files that don't exist and won't be created
+            # VALIDATION STEP 1: Check for imports to files that don't exist and won't be created
+            logger.debug(f"[Validation] Step 1: Checking relative imports...")
             import_errors = _validate_imports(modifications, file_contents, project_path)
             if import_errors:
                 error_msg = f"Import validation failed: {import_errors}"
-                logger.warning(f"Validation failed: {error_msg}")
+                logger.warning(f"[Validation] ✗ Step 1 failed: {error_msg}")
                 attempts.append(ExecutionAttempt(
                     attempt_number=attempt,
                     success=False,
@@ -479,24 +591,68 @@ Current Files:
                 ))
                 last_error = error_msg
                 continue
+            logger.debug(f"[Validation] ✓ Step 1 passed: Relative imports OK")
             
-            # Generate diffs
+            # VALIDATION STEP 2: Check for npm package imports that aren't installed
+            logger.debug(f"[Validation] Step 2: Checking npm package imports...")
+            npm_errors = _check_npm_imports(modifications, project_path)
+            if npm_errors:
+                error_msg = f"NPM import validation failed: {npm_errors}"
+                logger.warning(f"[Validation] ✗ Step 2 failed: {error_msg}")
+                attempts.append(ExecutionAttempt(
+                    attempt_number=attempt,
+                    success=False,
+                    diff="",
+                    error=error_msg,
+                    tokens_used=usage.total_tokens
+                ))
+                last_error = error_msg
+                continue
+            logger.debug(f"[Validation] ✓ Step 2 passed: NPM packages OK")
+            
+            # Parse response based on output format
+            parsed = _parse_executor_response(result, file_contents, output_format)
+            
+            # Generate or extract diffs based on format
             diffs = []
             combined_diff = ""
             
-            for mod in modifications:
-                file_path = mod.get("file")
-                new_content = mod.get("content")
-                
-                if not file_path or not new_content:
-                    continue
-                
-                original = file_contents.get(file_path, "")
-                diff_text = generate_unified_diff(original, new_content, file_path)
-                
-                if diff_text.strip():
-                    diffs.append({"file_path": file_path, "diff": diff_text})
-                    combined_diff += diff_text + "\n"
+            if output_format == "diff":
+                # Use LLM-provided diffs directly
+                for mod in parsed:
+                    file_path = mod.get("file")
+                    diff_text = mod.get("diff")
+                    content = mod.get("content")
+                    
+                    if not file_path:
+                        continue
+                    
+                    if diff_text:
+                        # LLM provided a diff for modification
+                        diffs.append({"file_path": file_path, "diff": diff_text})
+                        combined_diff += diff_text + "\n"
+                    elif content:
+                        # LLM provided full content for CREATE action
+                        original = file_contents.get(file_path, "")
+                        diff_text = generate_unified_diff(original, content, file_path)
+                        if diff_text.strip():
+                            diffs.append({"file_path": file_path, "diff": diff_text})
+                            combined_diff += diff_text + "\n"
+            else:
+                # full_content and search_replace both return normalized content
+                for mod in parsed:
+                    file_path = mod.get("file")
+                    new_content = mod.get("content")
+                    
+                    if not file_path or not new_content:
+                        continue
+                    
+                    original = file_contents.get(file_path, "")
+                    diff_text = generate_unified_diff(original, new_content, file_path)
+                    
+                    if diff_text.strip():
+                        diffs.append({"file_path": file_path, "diff": diff_text})
+                        combined_diff += diff_text + "\n"
             
             if not diffs:
                 attempts.append(ExecutionAttempt(
@@ -515,20 +671,23 @@ Current Files:
             apply_result = apply_with_git(project_path, combined_diff)
             
             if apply_result.success:
-                logger.info(f"Applied changes on attempt {attempt}, running validation...")
+                logger.info(f"Applied changes on attempt {attempt}")
                 
-                # Run build validation if enabled
+                # VALIDATION STEP 3: Run build validation if enabled
                 if run_validation:
+                    logger.debug(f"[Validation] Step 3: Running build validation...")
                     validation_result = await validate_build(project_path, validation_timeout)
                     
                     if not validation_result.success:
                         # Build failed - revert and retry
-                        logger.warning(f"Build validation failed: {validation_result.error_type}")
+                        logger.warning(f"[Validation] ✗ Step 3 failed: {validation_result.error_type}")
                         
                         # Try to revert the changes
                         reverted = _revert_changes(project_path, combined_diff)
-                        if not reverted:
-                            logger.warning("Could not revert changes - manual cleanup may be needed")
+                        if reverted:
+                            logger.info("[Validation] Reverted changes successfully")
+                        else:
+                            logger.warning("[Validation] Could not revert changes - manual cleanup may be needed")
                         
                         error_msg = f"Build failed ({validation_result.error_type} error):\n{validation_result.error_output}"
                         
@@ -542,9 +701,13 @@ Current Files:
                         
                         last_error = error_msg
                         continue  # Retry with error feedback
+                    
+                    logger.debug(f"[Validation] ✓ Step 3 passed: Build OK")
+                else:
+                    logger.debug(f"[Validation] Step 3 skipped: run_validation=False")
                 
-                # Validation passed (or skipped)
-                logger.info(f"Successfully applied and validated changes on attempt {attempt}")
+                # All validation passed
+                logger.info(f"✓ Successfully applied and validated changes on attempt {attempt}")
                 
                 attempts.append(ExecutionAttempt(
                     attempt_number=attempt,

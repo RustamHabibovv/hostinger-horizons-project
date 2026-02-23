@@ -9,6 +9,7 @@ from enum import Enum
 from openai import AsyncOpenAI
 
 from app.config import get_settings
+from app.prompts.intent import INTENT_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -55,31 +56,6 @@ class ParsedIntent:
     keywords: list[str]             # Important keywords
     requires_new_files: bool        # Might need to create files
     confidence: float               # 0-1 confidence in parsing
-
-
-INTENT_SYSTEM_PROMPT = """You are a code intent analyzer. Given a user instruction for modifying a React codebase, extract:
-
-1. Intent type: feature, bugfix, refactor, style, docs
-2. Complexity: low (1 file), medium (2-3 files), high (4+ files)
-3. A brief one-line summary
-4. File hints: likely filenames, patterns, or extensions
-5. Component hints: React component names, function names
-6. Keywords: important terms to search for
-7. Whether new files might need to be created
-
-Respond with JSON:
-{
-  "intent_type": "feature|bugfix|refactor|style|docs",
-  "complexity": "low|medium|high",
-  "summary": "one line summary",
-  "file_hints": ["App.jsx", "*.css", "components/"],
-  "component_hints": ["TodoList", "handleSubmit"],
-  "keywords": ["button", "dark mode", "color"],
-  "requires_new_files": false,
-  "confidence": 0.9
-}
-
-Be concise but thorough. Return ONLY valid JSON."""
 
 
 async def parse_intent(instruction: str) -> ParsedIntent:
