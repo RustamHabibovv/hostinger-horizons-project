@@ -40,3 +40,6 @@ htmlcov/
 # Misc
 *.log
 .DS_Store
+
+# FAISS vector indices (regenerated automatically)
+.faiss_indices/

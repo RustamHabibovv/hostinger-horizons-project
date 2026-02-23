@@ -39,12 +39,15 @@ async def generate_and_apply(request: CodeChangeRequest) -> CodeChangeResponse:
     Generate and apply code changes based on natural language instruction.
     
     Final output is always a unified diff applied via 'git apply'.
-    The output_format controls HOW we get the diff:
+    The output_format (configured in settings) controls HOW we get the diff:
     - full_content: LLM → full file → difflib generates diff (most reliable, more tokens)
     - search_replace: LLM → search/replace blocks → apply → difflib generates diff (balanced)
     - diff: LLM → outputs diff directly (fewest tokens, less reliable)
     """
-    logger.info(f"Generate: project={request.project}, format={request.output_format.value}")
+    # Get output format from config
+    output_format = OutputFormat(settings.output_format)
+    
+    logger.info(f"Generate: project={request.project}, format={output_format.value}")
     
     project_path = get_project_path(request.project)
     
@@ -64,7 +67,7 @@ async def generate_and_apply(request: CodeChangeRequest) -> CodeChangeResponse:
         modifications = await generate_code_changes(
             instruction=request.instruction,
             files=all_files,
-            output_format=request.output_format
+            output_format=output_format
         )
     except Exception as e:
         logger.error(f"LLM generation failed: {e}")
@@ -92,7 +95,7 @@ async def generate_and_apply(request: CodeChangeRequest) -> CodeChangeResponse:
         file_path = mod["file"]
         
         # Handle diff format (LLM provides diff directly)
-        if request.output_format == OutputFormat.DIFF:
+        if output_format == OutputFormat.DIFF:
             diff_text = mod.get("diff", "")
             if diff_text.strip():
                 diffs.append(FileDiff(filename=file_path, diff=diff_text))
@@ -141,18 +144,3 @@ async def generate_and_apply(request: CodeChangeRequest) -> CodeChangeResponse:
         message=apply_result.message,
         files_modified=files_modified
     )
-
-
-@router.get("/projects")
-async def list_projects() -> list[str]:
-    """List available projects."""
-    backend_dir = Path(__file__).parent.parent.parent
-    projects_path = backend_dir / settings.projects_base_path
-    
-    if not projects_path.exists():
-        return []
-    
-    return sorted([
-        d.name for d in projects_path.iterdir()
-        if d.is_dir() and not d.name.startswith(".")
-    ])

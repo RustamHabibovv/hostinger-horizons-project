@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router
+from app.api.agent_routes import router as agent_router
 from app.config import get_settings
 
 # Configure logging
@@ -36,16 +37,26 @@ app.add_middleware(
 
 # Include routes
 app.include_router(router, prefix="/api/v1", tags=["code-generation"])
+app.include_router(agent_router, prefix="/api/v1/agent", tags=["agent"])
 
 
 @app.on_event("startup")
 async def startup_event():
     logger.info(f"Starting AI Code Editor API")
-    logger.info(f"LLM Model: {settings.llm_model}")
+    logger.info(f"LLM Base URL: {settings.llm_base_url}")
+    logger.info(f"Models - Simple: {settings.model_simple}, Executor: {settings.model_executor}")
     logger.info(f"Projects path: {settings.projects_base_path}")
 
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "healthy", "model": settings.llm_model}
+    return {
+        "status": "healthy",
+        "models": {
+            "simple": settings.model_simple,
+            "intent": settings.model_intent,
+            "planner": settings.model_planner,
+            "executor": settings.model_executor
+        }
+    }

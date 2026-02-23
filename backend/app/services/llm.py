@@ -12,6 +12,19 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
+def _extract_json(content: str) -> str:
+    """Extract JSON from LLM response, handling markdown code blocks."""
+    content = content.strip()
+    if content.startswith("```"):
+        first_newline = content.find("\n")
+        if first_newline != -1:
+            content = content[first_newline + 1:]
+        if content.endswith("```"):
+            content = content[:-3]
+        content = content.strip()
+    return content
+
+
 # ============================================================================
 # PROMPTS FOR EACH INTERMEDIATE FORMAT
 # All approaches produce a unified diff (via git apply) - these control the
@@ -129,7 +142,10 @@ async def generate_code_changes(
         List of {file: path, content: modified_content}
         (normalized format regardless of output_format)
     """
-    client = AsyncOpenAI(api_key=settings.openai_api_key)
+    client = AsyncOpenAI(
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url
+    )
     
     # Build context with all files
     files_context = ""
@@ -156,7 +172,7 @@ Instruction: {instruction}"""
     logger.info(f"Files in context: {list(files.keys())}")
     
     response = await client.chat.completions.create(
-        model=settings.llm_model,
+        model=settings.model_simple,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
@@ -174,7 +190,8 @@ Instruction: {instruction}"""
     
     # Parse based on format
     try:
-        result = json.loads(content)
+        json_content = _extract_json(content)
+        result = json.loads(json_content)
         logger.debug(f"Parsed JSON result: {json.dumps(result, indent=2)[:2000]}")
         modifications = parser(result, files)
         logger.info(f"Files to modify: {[m['file'] for m in modifications]}")
@@ -182,7 +199,7 @@ Instruction: {instruction}"""
         
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse LLM response: {e}")
-        logger.debug(f"Raw: {content[:500]}")
+        logger.debug(f"Raw: {content[:1000]}")
         raise ValueError(f"LLM returned invalid JSON: {e}")
 
 
