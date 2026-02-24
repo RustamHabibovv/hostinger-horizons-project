@@ -1,6 +1,6 @@
 """
 Executor - Generates code changes with retry loop and error feedback.
-Uses GPT-4o for code generation (the expensive part).
+Uses model_executor (configurable in .env) for code generation.
 Includes build validation to catch runtime/compilation errors.
 """
 import asyncio
@@ -202,6 +202,11 @@ def _check_npm_imports(modifications: list[dict], project_path: Path) -> str | N
         for imp in imports:
             # Skip relative imports (already handled by _validate_imports)
             if imp.startswith("."):
+                continue
+            
+            # Skip path aliases like @/, @components/, @lib/, etc.
+            # These are configured in jsconfig.json/tsconfig.json/vite.config.js
+            if imp.startswith("@/") or imp.startswith("@components") or imp.startswith("@lib"):
                 continue
             
             # Extract base package name (e.g., "@radix-ui/react-slot" → "@radix-ui/react-slot", "react-icons/fa" → "react-icons")
@@ -459,7 +464,7 @@ async def execute_plan(
     If git apply fails, provides error feedback to LLM for retry.
     Optionally runs build validation to catch runtime errors.
     
-    Uses GPT-4o for code generation (only expensive call in the pipeline).
+    Uses model_executor (configurable in .env) for code generation.
     
     Args:
         instruction: The original user instruction

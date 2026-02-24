@@ -127,6 +127,13 @@ async def react_generate(request: ReactRequest) -> ReactResponse:
             for d in result.diffs
         ] if result.diffs else []
         
+        # Minimal response when verbose is disabled
+        if not settings.agent_verbose:
+            return ReactResponse(
+                success=result.success,
+                diffs=diffs
+            )
+        
         return ReactResponse(
             success=result.success,
             diffs=diffs,

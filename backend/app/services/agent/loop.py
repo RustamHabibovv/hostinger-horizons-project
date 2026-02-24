@@ -53,10 +53,10 @@ async def run_agent(
 ) -> AgentResult:
     """
     Run the full agent pipeline:
-    1. Parse intent (GPT-4o-mini)
+    1. Parse intent (model_intent - configurable)
     2. Retrieve relevant files (embeddings + multi-signal)
-    3. Create execution plan (GPT-4o-mini)
-    4. Execute with retry loop (GPT-4o)
+    3. Create execution plan (model_planner - configurable)
+    4. Execute with retry loop (model_executor - configurable)
     5. Validate build (npm run build)
     
     Args:

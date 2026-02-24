@@ -77,6 +77,12 @@ async def generate_and_apply(request: CodeChangeRequest) -> CodeChangeResponse:
         )
     
     if not modifications:
+        # Minimal response when verbose is disabled
+        if not settings.agent_verbose:
+            return CodeChangeResponse(
+                success=True,
+                diffs=[]
+            )
         return CodeChangeResponse(
             success=True,
             diffs=[],
@@ -117,6 +123,12 @@ async def generate_and_apply(request: CodeChangeRequest) -> CodeChangeResponse:
                 logger.info(f"Generated diff for {file_path}")
     
     if not diffs:
+        # Minimal response when verbose is disabled
+        if not settings.agent_verbose:
+            return CodeChangeResponse(
+                success=True,
+                diffs=[]
+            )
         return CodeChangeResponse(
             success=True,
             diffs=[],
@@ -129,6 +141,12 @@ async def generate_and_apply(request: CodeChangeRequest) -> CodeChangeResponse:
     
     if not apply_result.success:
         logger.error(f"Failed to apply changes: {apply_result.message}")
+        # Minimal response when verbose is disabled
+        if not settings.agent_verbose:
+            return CodeChangeResponse(
+                success=False,
+                diffs=diffs
+            )
         return CodeChangeResponse(
             success=False,
             diffs=diffs,
@@ -137,6 +155,13 @@ async def generate_and_apply(request: CodeChangeRequest) -> CodeChangeResponse:
         )
     
     logger.info(f"Successfully applied changes to {len(files_modified)} files")
+    
+    # Minimal response when verbose is disabled
+    if not settings.agent_verbose:
+        return CodeChangeResponse(
+            success=True,
+            diffs=diffs
+        )
     
     return CodeChangeResponse(
         success=True,

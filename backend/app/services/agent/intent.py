@@ -1,6 +1,6 @@
 """
 Intent parser - Classifies user instruction and extracts hints.
-Uses GPT-4o-mini for cost efficiency ($0.15/1M input, $0.60/1M output).
+Uses model_intent (configurable in .env) for cost efficiency.
 """
 import json
 import logging

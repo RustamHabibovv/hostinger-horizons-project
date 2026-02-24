@@ -10,8 +10,8 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://api.openai.com/v1"
     
     # Model selection per task - allows cost optimization
-    # For OpenRouter use: provider/model (e.g., anthropic/claude-sonnet-4)
-    # For OpenAI use: model name (e.g., gpt-4o)
+    # For OpenRouter use: provider/model (e.g., anthropic/claude-sonnet-4, google/gemini-2.5-flash)
+    # For OpenAI use: model name (e.g., gpt-4o, o1-mini)
     
     # Simple endpoint model
     model_simple: str = "google/gemini-3.1-pro-preview"  # For /generate endpoint
@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     agent_retrieval_top_k: int = 5
     agent_validate_build: bool = True
     agent_validation_timeout: int = 60
-    agent_verbose: bool = True
+    agent_verbose: bool = False
     agent_output_format: str = "full_content"  # full_content, search_replace, or diff
     
     # ReAct agent settings

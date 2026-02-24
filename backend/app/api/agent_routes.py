@@ -41,13 +41,13 @@ async def agent_generate(request: AgentRequest) -> AgentResponse:
     Multi-step agent for code generation.
     
     Pipeline:
-    1. Intent parsing (GPT-4o-mini) - Classify task, extract hints
+    1. Intent parsing (model_intent) - Classify task, extract hints
     2. Retrieval (embeddings + multi-signal) - Find relevant files
-    3. Planning (GPT-4o-mini) - Create execution plan
-    4. Execution (GPT-4o) - Generate code with retry loop
+    3. Planning (model_planner) - Create execution plan
+    4. Execution (model_executor) - Generate code with retry loop
     5. Build validation (npm run build)
     
-    Agent settings are configured in .env/config.
+    All models are configurable in .env (MODEL_INTENT, MODEL_PLANNER, MODEL_EXECUTOR).
     """
     logger.info(f"[Agent] Request: project={request.project}, instruction={request.instruction[:50]}...")
     
@@ -98,6 +98,13 @@ async def agent_generate(request: AgentRequest) -> AgentResponse:
             FileDiff(filename=d["file_path"], diff=d["diff"])
             for d in result.diffs
         ] if isinstance(result.diffs, list) and result.diffs else []
+        
+        # Minimal response when verbose is disabled
+        if not settings.agent_verbose:
+            return AgentResponse(
+                success=result.success,
+                diffs=diffs
+            )
         
         return AgentResponse(
             success=result.success,

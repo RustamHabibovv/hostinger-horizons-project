@@ -1,6 +1,6 @@
 """
 Planner - Creates execution plan based on intent and retrieved files.
-Uses GPT-4o-mini for cost efficiency.
+Uses model_planner (configurable in .env) for cost efficiency.
 """
 import json
 import logging
@@ -98,7 +98,7 @@ Create an execution plan:"""
         ],
         response_format={"type": "json_object"},
         temperature=0.2,
-        max_tokens=1000
+        max_tokens=2500  # Increased from 1000 to prevent truncation
     )
     
     content = response.choices[0].message.content
