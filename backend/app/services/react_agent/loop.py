@@ -133,7 +133,7 @@ async def run_react_agent(
             
             # Call LLM with function calling
             response = await client.chat.completions.create(
-                model=settings.model_executor,  # Use executor model for code generation
+                model=settings.model_react,  # Use react model for ReAct agent
                 messages=messages,
                 tools=tools,
                 tool_choice="auto",  # Let model decide

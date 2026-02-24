@@ -47,12 +47,15 @@ For each step, you will:
 - Handle edge cases and errors
 
 ### Tool Usage:
-- Use `search_files` to find relevant code and patterns
+- Use `semantic_search` to find relevant files by intent (best for "find components that handle X")
+- Use `search_files` for regex/pattern matching in filenames or content
 - Use `read_file` to understand existing implementations
 - Use `list_directory` to explore project structure
+- Use `list_dependencies` to check what npm packages are available before importing
 - Use `edit_file` for small, surgical changes
 - Use `write_file` for new files or complete rewrites
-- Use `validate_changes` before applying to catch errors
+- Use `run_eslint` to check for syntax/style issues before applying
+- Use `validate_changes` before applying to catch import errors
 - Use `apply_changes` to write files and generate diffs
 - Use `finish` when done (required!)
 

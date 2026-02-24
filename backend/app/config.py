@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     
     # ReAct agent settings
     react_max_iterations: int = 15
+    model_react: str = "google/gemini-3.1-pro-preview"  # ReAct agent model
     
     class Config:
         env_file = ".env"

@@ -46,7 +46,7 @@ app.include_router(react_router, prefix="/api/v1/react", tags=["react-agent"])
 async def startup_event():
     logger.info(f"Starting AI Code Editor API")
     logger.info(f"LLM Base URL: {settings.llm_base_url}")
-    logger.info(f"Models - Simple: {settings.model_simple}, Executor: {settings.model_executor}")
+    logger.info(f"Models - Simple: {settings.model_simple}, Executor: {settings.model_executor}, ReAct: {settings.model_react}")
     logger.info(f"Projects path: {settings.projects_base_path}")
 
 
@@ -59,6 +59,7 @@ async def health_check():
             "simple": settings.model_simple,
             "intent": settings.model_intent,
             "planner": settings.model_planner,
-            "executor": settings.model_executor
+            "executor": settings.model_executor,
+            "react": settings.model_react
         }
     }

@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Callable, Any
 
 from app.services.diff import generate_unified_diff, read_file_content, list_project_files
+from app.services.retrieval import retrieve_relevant_files
 
 logger = logging.getLogger(__name__)
 
@@ -402,6 +403,191 @@ async def finish(params: dict, context: dict) -> ToolResult:
     )
 
 
+async def semantic_search(params: dict, context: dict) -> ToolResult:
+    """
+    Semantic search using embeddings to find relevant files.
+    More powerful than regex - understands intent and finds related code.
+    """
+    project_path: Path = context["project_path"]
+    project: str = context["project"]
+    query = params.get("query", "")
+    top_k = params.get("top_k", 5)
+    
+    if not query:
+        return ToolResult(success=False, output="Error: 'query' parameter is required")
+    
+    try:
+        results = retrieve_relevant_files(
+            project=project,
+            project_path=project_path,
+            query=query,
+            hints=None,
+            top_k=top_k
+        )
+        
+        if not results:
+            return ToolResult(
+                success=True,
+                output=f"No relevant files found for: {query}"
+            )
+        
+        # Format results
+        output_lines = [f"Found {len(results)} relevant file(s) for '{query}':"]
+        for r in results:
+            signals = r.get('signals', [])
+            score = r.get('score', 0)
+            output_lines.append(f"\n📄 {r['file_path']} (score: {score:.2f}, signals: {', '.join(signals)})")
+        
+        return ToolResult(
+            success=True,
+            output="\n".join(output_lines),
+            data=results
+        )
+        
+    except Exception as e:
+        return ToolResult(success=False, output=f"Semantic search error: {e}")
+
+
+async def list_dependencies(params: dict, context: dict) -> ToolResult:
+    """
+    List npm packages available in the project from package.json.
+    """
+    project_path: Path = context["project_path"]
+    include_dev = params.get("include_dev", False)
+    
+    try:
+        package_json = project_path / "package.json"
+        if not package_json.exists():
+            return ToolResult(success=False, output="No package.json found in project")
+        
+        data = json.loads(package_json.read_text(encoding='utf-8'))
+        
+        deps = data.get("dependencies", {})
+        dev_deps = data.get("devDependencies", {}) if include_dev else {}
+        
+        output_lines = ["Available npm packages:"]
+        
+        if deps:
+            output_lines.append("\n📦 Dependencies:")
+            for name, version in sorted(deps.items()):
+                output_lines.append(f"  - {name}: {version}")
+        
+        if dev_deps:
+            output_lines.append("\n🔧 Dev Dependencies:")
+            for name, version in sorted(dev_deps.items()):
+                output_lines.append(f"  - {name}: {version}")
+        
+        if not deps and not dev_deps:
+            output_lines.append("No dependencies found.")
+        
+        return ToolResult(
+            success=True,
+            output="\n".join(output_lines),
+            data={"dependencies": deps, "devDependencies": dev_deps}
+        )
+        
+    except Exception as e:
+        return ToolResult(success=False, output=f"Error reading package.json: {e}")
+
+
+async def run_eslint(params: dict, context: dict) -> ToolResult:
+    """
+    Run ESLint on a file to check for syntax and style issues.
+    Can run on pending changes or existing files.
+    """
+    project_path: Path = context["project_path"]
+    file_path = params.get("path", "")
+    
+    if not file_path:
+        return ToolResult(success=False, output="Error: 'path' parameter is required")
+    
+    try:
+        # Check if we have pending changes for this file
+        pending: dict = context.get("pending_changes", {})
+        
+        if file_path in pending:
+            # Write to temp file for linting
+            import tempfile
+            import os
+            
+            suffix = Path(file_path).suffix
+            with tempfile.NamedTemporaryFile(mode='w', suffix=suffix, delete=False, encoding='utf-8') as f:
+                f.write(pending[file_path])
+                temp_path = f.name
+            
+            try:
+                result = await _run_eslint_on_file(temp_path, project_path)
+            finally:
+                os.unlink(temp_path)
+        else:
+            # Lint existing file
+            full_path = project_path / file_path
+            if not full_path.exists():
+                return ToolResult(success=False, output=f"File not found: {file_path}")
+            
+            result = await _run_eslint_on_file(str(full_path), project_path)
+        
+        return result
+        
+    except Exception as e:
+        return ToolResult(success=False, output=f"ESLint error: {e}")
+
+
+async def _run_eslint_on_file(file_path: str, project_path: Path) -> ToolResult:
+    """Run ESLint on a specific file."""
+    
+    def run_lint():
+        # Try project's eslint first, fall back to basic check
+        try:
+            # Use project's eslint config if available
+            result = subprocess.run(
+                ["npx", "eslint", "--format", "compact", file_path],
+                cwd=str(project_path),
+                capture_output=True,
+                timeout=30
+            )
+            return result
+        except FileNotFoundError:
+            # No npm/npx available
+            return None
+    
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, run_lint)
+        
+        if result is None:
+            return ToolResult(
+                success=True,
+                output="ESLint not available (npm/npx not found). Skipping lint check."
+            )
+        
+        stdout = result.stdout.decode('utf-8', errors='replace').strip()
+        stderr = result.stderr.decode('utf-8', errors='replace').strip()
+        
+        if result.returncode == 0:
+            return ToolResult(
+                success=True,
+                output="✓ ESLint: No errors found"
+            )
+        else:
+            # Parse eslint output
+            output = stdout if stdout else stderr
+            
+            # Truncate if too long
+            if len(output) > 2000:
+                output = output[:2000] + "\n... (truncated)"
+            
+            return ToolResult(
+                success=False,
+                output=f"ESLint found issues:\n{output}"
+            )
+            
+    except subprocess.TimeoutExpired:
+        return ToolResult(success=True, output="ESLint timed out, skipping.")
+    except Exception as e:
+        return ToolResult(success=False, output=f"ESLint error: {e}")
+
+
 # =============================================================================
 # TOOL DEFINITIONS (for LLM)
 # =============================================================================
@@ -505,6 +691,43 @@ REACT_TOOLS: list[Tool] = [
             "required": ["summary"]
         },
         execute=finish
+    ),
+    Tool(
+        name="semantic_search",
+        description="Find relevant files using semantic search (embeddings). Better than regex for understanding intent - finds related code even with different wording.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Natural language description of what you're looking for"},
+                "top_k": {"type": "integer", "description": "Number of results to return", "default": 5}
+            },
+            "required": ["query"]
+        },
+        execute=semantic_search
+    ),
+    Tool(
+        name="list_dependencies",
+        description="List npm packages available in the project. Use this to check what libraries are installed before importing them.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "include_dev": {"type": "boolean", "description": "Include devDependencies", "default": False}
+            },
+            "required": []
+        },
+        execute=list_dependencies
+    ),
+    Tool(
+        name="run_eslint",
+        description="Run ESLint on a file to check for syntax errors and style issues. Works on pending changes too.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "File path to lint"}
+            },
+            "required": ["path"]
+        },
+        execute=run_eslint
     )
 ]
 
