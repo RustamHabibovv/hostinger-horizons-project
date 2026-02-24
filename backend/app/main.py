@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router
 from app.api.agent_routes import router as agent_router
+from app.api.react_routes import router as react_router
 from app.config import get_settings
 
 # Configure logging
@@ -38,6 +39,7 @@ app.add_middleware(
 # Include routes
 app.include_router(router, prefix="/api/v1", tags=["code-generation"])
 app.include_router(agent_router, prefix="/api/v1/agent", tags=["agent"])
+app.include_router(react_router, prefix="/api/v1/react", tags=["react-agent"])
 
 
 @app.on_event("startup")

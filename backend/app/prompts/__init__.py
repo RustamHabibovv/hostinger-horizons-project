@@ -29,6 +29,14 @@ from app.prompts.executor import (
     EXECUTOR_RETRY_PROMPT,
 )
 
+from app.prompts.react_agent import (
+    REACT_SYSTEM_PROMPT,
+    REACT_INITIAL_USER_PROMPT,
+    REACT_OBSERVATION_PROMPT,
+    REACT_ERROR_PROMPT,
+    REACT_MAX_ITERATIONS_PROMPT,
+)
+
 __all__ = [
     # Simple endpoint
     "SIMPLE_PROMPT_FULL_CONTENT",
@@ -43,4 +51,10 @@ __all__ = [
     "EXECUTOR_PROMPT_SEARCH_REPLACE",
     "EXECUTOR_PROMPT_DIFF",
     "EXECUTOR_RETRY_PROMPT",
+    # ReAct Agent
+    "REACT_SYSTEM_PROMPT",
+    "REACT_INITIAL_USER_PROMPT",
+    "REACT_OBSERVATION_PROMPT",
+    "REACT_ERROR_PROMPT",
+    "REACT_MAX_ITERATIONS_PROMPT",
 ]

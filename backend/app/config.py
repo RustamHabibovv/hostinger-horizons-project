@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     agent_verbose: bool = True
     agent_output_format: str = "full_content"  # full_content, search_replace, or diff
     
+    # ReAct agent settings
+    react_max_iterations: int = 15
+    
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
