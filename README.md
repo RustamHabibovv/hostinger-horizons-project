@@ -21,6 +21,28 @@ This project implements **three distinct approaches** to solve the problem, allo
 | **Multi-Agent** | `/api/v1/agent/generate` | Pipeline with intent parsing, retrieval, planning, execution | Complex changes with validation |
 | **ReAct Agent** | `/api/v1/react/generate` | Autonomous agent with tools and reasoning loop | Exploratory, multi-file changes |
 
+## Demo
+
+### Example 1: Contact Form (Single-Shot)
+**Instruction:** "Add a contact us form in the bottom of main page, match style of the webpage, customer should be able to enter his name, email address and message"  
+**Model:** `gpt-4o` | **Time:** <30s
+
+![Contact form example](docs/screenshots/simple.png)
+
+### Example 2: Admin Dashboard (Multi-Agent)
+**Instruction:** "Add a new statistics with dashboards page for admin, where he can see stats about customers, products, etc."  
+**Model:** `qwen/qwen3-coder-flash` | **Time:** <2 min
+
+![Admin dashboard example 1](docs/screenshots/agent-1.png)
+![Admin dashboard example 2](docs/screenshots/agent-2.png)
+
+### Example 3: Auth System (ReAct Agent)
+**Instruction:** "Add a new customer login, register page"  
+**Model:** `qwen/qwen3-coder-flash` | **Time:** 2-3 min
+
+![Auth system example 1](docs/screenshots/react-1.png)
+![Auth system example 2](docs/screenshots/react-2.png)
+
 ## Key Features
 
 - **Multi-model support** — Use different models for different tasks (cost optimization)
@@ -75,6 +97,7 @@ See [docs/SETUP.md](docs/SETUP.md) for detailed setup instructions.
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, components, data flow |
 | [API.md](docs/API.md) | API reference with request/response examples |
 | [APPROACHES.md](docs/APPROACHES.md) | Deep dive into the three approaches |
+| [DECISIONS.md](docs/DECISIONS.md) | Technology choices and rationale |
 | [DECISIONS.md](docs/DECISIONS.md) | Technology choices and rationale |
 
 ## Project Structure
